@@ -19,6 +19,6 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "MetroFirHook"
+rootProject.name = "metro-fir-hook"
 include(":app")
  
