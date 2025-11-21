@@ -2,8 +2,10 @@ package com.example.metrofirhook
 
 import androidx.lifecycle.lifecycleScope
 import dev.zacsweers.metro.AppScope
+import dev.zacsweers.metro.ContributesIntoSet
 import dev.zacsweers.metro.ContributesTo
 import dev.zacsweers.metro.Provides
+import dev.zacsweers.metro.binding
 import kotlinx.coroutines.CoroutineScope
 
 @ContributesTo(AppScope::class)
@@ -25,4 +27,10 @@ object StringConfig : Config<String> {
 object IntConfig : Config<Int> {
     override val key: String get() = "int"
     override val value: Int get() = 777
+}
+
+@ContributesIntoSet(AppScope::class, binding = binding<Config<*>>())
+object DefaultConfig : Config<Boolean> {
+    override val key: String get() = "default bool"
+    override val value: Boolean get() = false
 }
