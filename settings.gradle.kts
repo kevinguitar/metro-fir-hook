@@ -21,5 +21,6 @@ dependencyResolutionManagement {
 
 rootProject.name = "metro-fir-hook"
 include(":app")
+include(":compiler-extension")
 
 includeBuild("../metro")

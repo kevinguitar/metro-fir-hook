@@ -63,5 +63,5 @@ dependencies {
     debugImplementation(libs.androidx.compose.ui.tooling)
     debugImplementation(libs.androidx.compose.ui.test.manifest)
 
-    compileOnly(libs.kotlin.compiler.embeddable)
+    kotlinCompilerPluginClasspath(project(":compiler-extension"))
 }
