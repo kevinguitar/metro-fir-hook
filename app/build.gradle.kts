@@ -46,6 +46,10 @@ android {
     }
 }
 
+metro {
+    reportsDestination.set(layout.buildDirectory.dir("metro"))
+}
+
 dependencies {
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.lifecycle.runtime.ktx)

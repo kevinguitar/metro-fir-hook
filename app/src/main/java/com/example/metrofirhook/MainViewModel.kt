@@ -9,7 +9,7 @@ import java.util.logging.Logger
 @Inject
 internal class MainViewModel(
     coroutineScope: CoroutineScope,
-    configs: Set<Config<*>>
+    configs: Set<Config<*>>,
 ) {
     val greeting = configs.joinToString("\n") { it.key + ": " + it.value }
 

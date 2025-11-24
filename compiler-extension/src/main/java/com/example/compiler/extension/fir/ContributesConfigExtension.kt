@@ -42,6 +42,28 @@ import org.jetbrains.kotlin.name.FqName
 import org.jetbrains.kotlin.name.Name
 import org.jetbrains.kotlin.name.StandardClassIds
 
+/**
+ * This FIR extension generates a multi-binding provider of the config.
+ *
+ * For example:
+ * ```kotlin
+ * @ContributesConfig
+ * object StringConfig : Config<String> {
+ *     override val key: String get() = "string"
+ *     override val value: String get() = "Hello Metro!"
+ * }
+ * ```
+ *
+ * will generate
+ *
+ * ```kotlin
+ * @ContributesTo(scope = AppScope::class)
+ * interface StringConfigProvider {
+ *     @Binds @IntoSet
+ *     fun provideConfig(config: StringConfig): Config<*>
+ * }
+ * ```
+ */
 class ContributesConfigExtension(session: FirSession) : FirDeclarationGenerationExtension(session) {
 
     private val contributesConfigPredicate = LookupPredicate.create {
@@ -50,8 +72,10 @@ class ContributesConfigExtension(session: FirSession) : FirDeclarationGeneration
 
     private val provideConfigName = Name.identifier("provideConfig")
     private val metroPackage = FqName("dev.zacsweers.metro")
-    private val configClassId = ClassId(FqName("com.example.metrofirhook"), Name.identifier("Config"))
+    private val configClassId =
+        ClassId(FqName("com.example.metrofirhook"), Name.identifier("Config"))
     private val appScopeClassId = ClassId(metroPackage, Name.identifier("AppScope"))
+    private val contributesToClassId = ClassId(metroPackage, Name.identifier("ContributesTo"))
     private val bindsClassId = ClassId(metroPackage, Name.identifier("Binds"))
     private val intoSetClassId = ClassId(metroPackage, Name.identifier("IntoSet"))
 
@@ -80,13 +104,13 @@ class ContributesConfigExtension(session: FirSession) : FirDeclarationGeneration
 
     @ExperimentalTopLevelDeclarationsGenerationApi
     override fun generateTopLevelClassLikeDeclaration(classId: ClassId): FirClassLikeSymbol<*>? {
-        val originalSymbol = symbols.getValue(Unit)[classId] ?: return null
+        symbols.getValue(Unit)[classId] ?: return null
         val configProvider = createTopLevelClass(classId, Key, classKind = ClassKind.INTERFACE) {
             modality = Modality.ABSTRACT
         }
 
         val configProviderAnnotation = buildAnnotation {
-            annotationTypeRef = appScopeClassId.firTypeRef()
+            annotationTypeRef = contributesToClassId.firTypeRef()
 
             argumentMapping = buildAnnotationArgumentMapping {
                 val appScope = session.symbolProvider
@@ -101,9 +125,12 @@ class ContributesConfigExtension(session: FirSession) : FirDeclarationGeneration
         return configProvider.symbol
     }
 
-    override fun getCallableNamesForClass(classSymbol: FirClassSymbol<*>, context: MemberGenerationContext): Set<Name> {
+    override fun getCallableNamesForClass(
+        classSymbol: FirClassSymbol<*>,
+        context: MemberGenerationContext
+    ): Set<Name> {
         return if (classSymbol.classId in symbols.getValue(Unit)) {
-            setOf(Name.identifier("provideConfig"))
+            setOf(provideConfigName)
         } else {
             emptySet()
         }
