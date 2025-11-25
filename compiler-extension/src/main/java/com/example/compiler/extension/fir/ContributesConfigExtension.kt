@@ -4,6 +4,7 @@ import org.jetbrains.kotlin.GeneratedDeclarationKey
 import org.jetbrains.kotlin.descriptors.ClassKind
 import org.jetbrains.kotlin.descriptors.Modality
 import org.jetbrains.kotlin.fir.FirSession
+import org.jetbrains.kotlin.fir.analysis.checkers.outerClassSymbol
 import org.jetbrains.kotlin.fir.caches.FirCache
 import org.jetbrains.kotlin.fir.caches.firCachesFactory
 import org.jetbrains.kotlin.fir.caches.getValue
@@ -21,10 +22,12 @@ import org.jetbrains.kotlin.fir.extensions.FirDeclarationGenerationExtension
 import org.jetbrains.kotlin.fir.extensions.FirDeclarationPredicateRegistrar
 import org.jetbrains.kotlin.fir.extensions.FirSupertypeGenerationExtension.TypeResolveService
 import org.jetbrains.kotlin.fir.extensions.MemberGenerationContext
+import org.jetbrains.kotlin.fir.extensions.NestedClassGenerationContext
 import org.jetbrains.kotlin.fir.extensions.predicate.LookupPredicate
 import org.jetbrains.kotlin.fir.extensions.predicateBasedProvider
 import org.jetbrains.kotlin.fir.packageFqName
 import org.jetbrains.kotlin.fir.plugin.createMemberFunction
+import org.jetbrains.kotlin.fir.plugin.createNestedClass
 import org.jetbrains.kotlin.fir.plugin.createTopLevelClass
 import org.jetbrains.kotlin.fir.resolve.defaultType
 import org.jetbrains.kotlin.fir.resolve.providers.symbolProvider
@@ -54,13 +57,18 @@ import org.jetbrains.kotlin.name.StandardClassIds
  * }
  * ```
  *
- * will generate
+ * will generate an inner object
  *
  * ```kotlin
- * @ContributesTo(scope = AppScope::class)
- * interface StringConfigProvider {
- *     @Binds @IntoSet
- *     fun provideConfig(config: StringConfig): Config<*>
+ * @ContributesConfig
+ * object StringConfig : Config<String> {
+ *     //...
+ *
+ *     @ContributesTo(scope = AppScope::class)
+ *     interface Provider {
+ *         @Binds @IntoSet
+ *         fun provideConfig(config: StringConfig): Config<*>
+ *     }
  * }
  * ```
  */
@@ -71,6 +79,7 @@ class ContributesConfigExtension(session: FirSession) : FirDeclarationGeneration
     }
 
     private val provideConfigName = Name.identifier("provideConfig")
+    private val providerName = Name.identifier("Provider")
     private val metroPackage = FqName("dev.zacsweers.metro")
     private val configClassId =
         ClassId(FqName("com.example.metrofirhook"), Name.identifier("Config"))
@@ -79,33 +88,36 @@ class ContributesConfigExtension(session: FirSession) : FirDeclarationGeneration
     private val bindsClassId = ClassId(metroPackage, Name.identifier("Binds"))
     private val intoSetClassId = ClassId(metroPackage, Name.identifier("IntoSet"))
 
-    // FIR cache for provider class ids to original class symbols.
-    private val symbols: FirCache<Unit, Map<ClassId, FirRegularClassSymbol>, TypeResolveService?> =
+    private val symbols: FirCache<Unit, List<ClassId>, TypeResolveService?> =
         session.firCachesFactory.createCache { _, _ ->
             session.predicateBasedProvider
                 .getSymbolsByPredicate(contributesConfigPredicate)
                 .filterIsInstance<FirRegularClassSymbol>()
-                .associateBy {
-                    ClassId(
-                        packageFqName = it.packageFqName(),
-                        topLevelName = Name.identifier(it.name.asString() + "Provider")
-                    )
-                }
+                .map { it.classId }
         }
 
     override fun FirDeclarationPredicateRegistrar.registerPredicates() {
         register(contributesConfigPredicate)
     }
 
-    @ExperimentalTopLevelDeclarationsGenerationApi
-    override fun getTopLevelClassIds(): Set<ClassId> {
-        return symbols.getValue(Unit).keys
+    override fun getNestedClassifiersNames(
+        classSymbol: FirClassSymbol<*>,
+        context: NestedClassGenerationContext
+    ): Set<Name> {
+        return if (classSymbol.classId in symbols.getValue(Unit)) {
+            setOf(providerName)
+        } else {
+            emptySet()
+        }
     }
 
-    @ExperimentalTopLevelDeclarationsGenerationApi
-    override fun generateTopLevelClassLikeDeclaration(classId: ClassId): FirClassLikeSymbol<*>? {
-        symbols.getValue(Unit)[classId] ?: return null
-        val configProvider = createTopLevelClass(classId, Key, classKind = ClassKind.INTERFACE) {
+    override fun generateNestedClassLikeDeclaration(
+        owner: FirClassSymbol<*>,
+        name: Name,
+        context: NestedClassGenerationContext
+    ): FirClassLikeSymbol<*>? {
+        if (name != providerName) return null
+        val configProvider = createNestedClass(owner, providerName, Key, classKind = ClassKind.INTERFACE) {
             modality = Modality.ABSTRACT
         }
 
@@ -129,7 +141,7 @@ class ContributesConfigExtension(session: FirSession) : FirDeclarationGeneration
         classSymbol: FirClassSymbol<*>,
         context: MemberGenerationContext
     ): Set<Name> {
-        return if (classSymbol.classId in symbols.getValue(Unit)) {
+        return if (classSymbol.classId.outerClassId in symbols.getValue(Unit)) {
             setOf(provideConfigName)
         } else {
             emptySet()
@@ -146,7 +158,6 @@ class ContributesConfigExtension(session: FirSession) : FirDeclarationGeneration
             provideConfigName -> {
                 val ownerClassId = owner.classId
                 val outerClassId = ownerClassId.outerClassId ?: return emptyList()
-                val originalSymbol = symbols.getValue(Unit)[outerClassId] ?: return emptyList()
                 val createFunction = createMemberFunction(
                     owner = owner,
                     key = Key,
@@ -156,17 +167,16 @@ class ContributesConfigExtension(session: FirSession) : FirDeclarationGeneration
                     modality = Modality.ABSTRACT
                     valueParameter(
                         name = Name.identifier("config"),
-                        type = originalSymbol.classId.constructClassLikeType(),
+                        type = outerClassId.constructClassLikeType(),
                     )
                 }
 
-                val targetParam = createFunction.valueParameters.first()
-                val targetParamWithProvides = buildValueParameterCopy(targetParam) {
-                    symbol = targetParam.symbol
-                    annotations += bindsClassId.firAnnotation()
-                    annotations += intoSetClassId.firAnnotation()
-                }
-                createFunction.replaceValueParameters(listOf(targetParamWithProvides))
+                createFunction.replaceAnnotations(
+                    listOf(
+                        bindsClassId.firAnnotation(),
+                        intoSetClassId.firAnnotation()
+                    )
+                )
 
                 return listOf(createFunction.symbol)
             }
